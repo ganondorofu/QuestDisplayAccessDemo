@@ -4,123 +4,132 @@ using UnityEngine.Events;
 
 namespace Anaglyph.DisplayCapture
 {
-	[DefaultExecutionOrder(-1000)]
-	public class DisplayCaptureManager : MonoBehaviour
-	{
-		public static DisplayCaptureManager Instance { get; private set; }
+    [DefaultExecutionOrder(-1000)]
+    public class DisplayCaptureManager : MonoBehaviour
+    {
+        public static DisplayCaptureManager Instance { get; private set; }
 
-		public bool startScreenCaptureOnStart = true;
-		public bool flipTextureOnGPU = false;
+        public bool startScreenCaptureOnStart = true;
+        public bool flipTextureOnGPU = false;
 
-		[SerializeField] private Vector2Int textureSize = new(1024, 1024);
-		public Vector2Int Size => textureSize;
+        [SerializeField]
+        private Vector2Int textureSize = new(1024, 1024);
+        public Vector2Int Size => textureSize;
 
-		private Texture2D screenTexture;
-		public Texture2D ScreenCaptureTexture => screenTexture;
-		
-		private RenderTexture flipTexture;
+        private Texture2D screenTexture;
+        public Texture2D ScreenCaptureTexture => screenTexture;
 
-		public Matrix4x4 ProjectionMatrix { get; private set; }
+        private RenderTexture flipTexture;
 
-		public UnityEvent<Texture2D> onTextureInitialized = new();
-		public UnityEvent onStarted = new();
-		public UnityEvent onPermissionDenied = new();
-		public UnityEvent onStopped = new();
-		public UnityEvent onNewFrame = new();
+        public Matrix4x4 ProjectionMatrix { get; private set; }
 
-		private unsafe sbyte* imageData;
-		private int bufferSize;
+        public UnityEvent<Texture2D> onTextureInitialized = new();
+        public UnityEvent onStarted = new();
+        public UnityEvent onPermissionDenied = new();
+        public UnityEvent onStopped = new();
+        public UnityEvent onNewFrame = new();
 
-		private class AndroidInterface
-		{
-			private AndroidJavaClass androidClass;
-			private AndroidJavaObject androidInstance;
+        private unsafe sbyte* imageData;
+        private int bufferSize;
 
-			public AndroidInterface(GameObject messageReceiver, int textureWidth, int textureHeight)
-			{
-				androidClass = new AndroidJavaClass("com.trev3d.DisplayCapture.DisplayCaptureManager");
-				androidInstance = androidClass.CallStatic<AndroidJavaObject>("getInstance");
-				androidInstance.Call("setup", messageReceiver.name, textureWidth, textureHeight);
-			}
+        private class AndroidInterface
+        {
+            private AndroidJavaClass androidClass;
+            private AndroidJavaObject androidInstance;
 
-			public void RequestCapture() => androidInstance.Call("requestCapture");
-			public void StopCapture() => androidInstance.Call("stopCapture");
+            public AndroidInterface(GameObject messageReceiver, int textureWidth, int textureHeight)
+            {
+                androidClass = new AndroidJavaClass(
+                    "com.trev3d.DisplayCapture.DisplayCaptureManager"
+                );
+                androidInstance = androidClass.CallStatic<AndroidJavaObject>("getInstance");
+                androidInstance.Call("setup", messageReceiver.name, textureWidth, textureHeight);
+            }
 
-			public unsafe sbyte* GetByteBuffer()
-			{
-				AndroidJavaObject byteBuffer = androidInstance.Call<AndroidJavaObject>("getByteBuffer");
-				return AndroidJNI.GetDirectBufferAddress(byteBuffer.GetRawObject());
-			}
-		}
+            public void RequestCapture() => androidInstance.Call("requestCapture");
 
-		private AndroidInterface androidInterface;
+            public void StopCapture() => androidInstance.Call("stopCapture");
 
-		private void Awake()
-		{
-			Instance = this;
+            public unsafe sbyte* GetByteBuffer()
+            {
+                AndroidJavaObject byteBuffer = androidInstance.Call<AndroidJavaObject>(
+                    "getByteBuffer"
+                );
+                return AndroidJNI.GetDirectBufferAddress(byteBuffer.GetRawObject());
+            }
+        }
 
-			androidInterface = new AndroidInterface(gameObject, Size.x, Size.y);
+        private AndroidInterface androidInterface;
 
-			screenTexture = new Texture2D(Size.x, Size.y, TextureFormat.RGBA32, 1, false);
-		}
+        private void Awake()
+        {
+            Instance = this;
 
-		private void Start()
-		{
-			flipTexture = new RenderTexture(Size.x, Size.y, 1, RenderTextureFormat.ARGB32, 1);
-			flipTexture.Create();
+            androidInterface = new AndroidInterface(gameObject, Size.x, Size.y);
 
-			onTextureInitialized.Invoke(screenTexture);
+            screenTexture = new Texture2D(Size.x, Size.y, TextureFormat.RGBA32, 1, false);
+        }
 
-			if (startScreenCaptureOnStart)
-			{
-				StartScreenCapture();
-			}
-			bufferSize = Size.x * Size.y * 4; // RGBA_8888 format: 4 bytes per pixel
-		}
+        private void Start()
+        {
+            flipTexture = new RenderTexture(Size.x, Size.y, 1, RenderTextureFormat.ARGB32, 1);
+            flipTexture.Create();
 
-		public void StartScreenCapture()
-		{
-			androidInterface.RequestCapture();
-		}
+            onTextureInitialized.Invoke(screenTexture);
 
-		public void StopScreenCapture()
-		{
-			androidInterface.StopCapture();
-		}
+            if (startScreenCaptureOnStart)
+            {
+                StartScreenCapture();
+            }
+            bufferSize = Size.x * Size.y * 4; // RGBA_8888 format: 4 bytes per pixel
+        }
 
-		// Messages sent from Android
+        public void StartScreenCapture()
+        {
+            androidInterface.RequestCapture();
+        }
+
+        public void StopScreenCapture()
+        {
+            androidInterface.StopCapture();
+        }
+
+        // Messages sent from Android
 
 #pragma warning disable IDE0051 // Remove unused private members
-		private unsafe void OnCaptureStarted()
-		{
-			onStarted.Invoke();
-			imageData = androidInterface.GetByteBuffer();
-		}
+        private unsafe void OnCaptureStarted()
+        {
+            onStarted.Invoke();
+            imageData = androidInterface.GetByteBuffer();
+            Debug.Log("Capture Started, quitting app to prevent freeze...");
+            Application.Quit();
+        }
 
-		private void OnPermissionDenied()
-		{
-			onPermissionDenied.Invoke();
-		}
+        private void OnPermissionDenied()
+        {
+            onPermissionDenied.Invoke();
+        }
 
-		private unsafe void OnNewFrameAvailable()
-		{
-			if (imageData == default) return;
-			screenTexture.LoadRawTextureData((IntPtr)imageData, bufferSize);
-			screenTexture.Apply();
+        private unsafe void OnNewFrameAvailable()
+        {
+            if (imageData == default)
+                return;
+            screenTexture.LoadRawTextureData((IntPtr)imageData, bufferSize);
+            screenTexture.Apply();
 
-			if (flipTextureOnGPU)
-			{
-				Graphics.Blit(screenTexture, flipTexture, new Vector2(1, -1), Vector2.zero);
-				Graphics.CopyTexture(flipTexture, screenTexture);
-			}
+            if (flipTextureOnGPU)
+            {
+                Graphics.Blit(screenTexture, flipTexture, new Vector2(1, -1), Vector2.zero);
+                Graphics.CopyTexture(flipTexture, screenTexture);
+            }
 
-			onNewFrame.Invoke();
-		}
+            onNewFrame.Invoke();
+        }
 
-		private void OnCaptureStopped()
-		{
-			onStopped.Invoke();
-		}
+        private void OnCaptureStopped()
+        {
+            onStopped.Invoke();
+        }
 #pragma warning restore IDE0051 // Remove unused private members
-	}
+    }
 }
